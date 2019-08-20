@@ -11,7 +11,7 @@
 		<dependency>
 			<groupId>fish.focus.uvms.commons</groupId>
 			<artifactId>commons-les</artifactId>
-			<version>1.5-SNAPSHOT</version>
+			<version>1.5</version>
 		</dependency>
 	</dependencies>
 

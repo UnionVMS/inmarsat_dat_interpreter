@@ -5,10 +5,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Calendar;
-import java.util.Date;
+import java.util.*;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,94 +34,52 @@ public class ReadInmarsat {
 
 	public static void main(String[] args) throws FileNotFoundException {
 		if (args.length != 1) {
-			LOG.info("Usage : readinmarsat  <fullpath to file>");
+			LOG.info("Usage : readinmarsat  <base64 string>");
+			System.out.println("Usage : readinmarsat  <base64 string>");
 			return;
 		}
-		String fileName = args[0];
+		String base64 = args[0];
 		ReadInmarsat pgm = new ReadInmarsat();
 		try {
-			pgm.execute(fileName);
-		} catch (IllegalArgumentException | FileNotFoundException | InmarsatException e) {
-			LOG.error(e.toString());
+			pgm.execute(base64);
+		} catch (Exception e /*IllegalArgumentException | FileNotFoundException | InmarsatException e*/) {
+			System.out.println(e.toString());
 		}
 
 	}
 
-	private void execute(String fileName) throws FileNotFoundException, InmarsatException {
+	private void execute(String base64) throws FileNotFoundException, InmarsatException {
 
-		if (fileName == null) {
-			throw new IllegalArgumentException("no filename provided");
-		}
-		File f = new File(fileName);
-		if (!f.exists()) {
-			throw new IllegalArgumentException("file does not exist");
-		}
-
-		MiniFileTransfer miniFileTransfer = new MiniFileTransfer();
+		/*MiniFileTransfer miniFileTransfer = new MiniFileTransfer();
 		FileInputStream fis = new FileInputStream(fileName);
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
-		miniFileTransfer.copy(fis, bos, true);
-		byte[] msg = bos.toByteArray();
+		miniFileTransfer.copy(fis, bos, true);*/
+
+		byte[] msg = Base64.getDecoder().decode(base64);
 
 		InmarsatMessage[] inmarsatMessages = byteToInmMessage(msg);
 		int nMessages = inmarsatMessages.length;
-
+		if(inmarsatMessages.length == 0){
+			System.out.println("Not an inmarsat message");
+			System.out.println(new String(msg));
+		}
 		for (int current = 0; current < nMessages; current++) {
 
 			InmarsatMessage inmarsatMessage = inmarsatMessages[current];
 			InmarsatHeader inmarsatHeader = inmarsatMessage.getHeader();
 			if (inmarsatHeader != null) {
 				String header = inmarsatHeader.toString();
-				LOG.info(format(header));
 				InmarsatBody inmarsatBody = inmarsatMessage.getBody();
+				System.out.println(format(header));
 				if (inmarsatBody != null) {
 					String body = inmarsatBody.toString();
-					LOG.info(format(body));
+					System.out.println(format(body));
 				}
 				else {
-					LOG.info("No BODY");
+					System.out.println("No BODY");
 				}
 			}
 		}
-	}
-
-	public InmarsatMessage[] byteToInmMessage(final byte[] fileBytes) {
-
-		byte[] bytes = insertMissingData(fileBytes);
-
-		ArrayList<InmarsatMessage> messages = new ArrayList<>();
-
-		if (bytes == null || bytes.length <= PATTERN_LENGTH) {
-			LOG.info("File is not a valid Inmarsat Message");
-			return new InmarsatMessage[] {};
-		}
-		boolean errorInfile = false;
-		// Parse bytes for messages
-		for (int i = 0; i < (bytes.length - PATTERN_LENGTH); i++) {
-			// Find message
-			if (InmarsatHeader.isStartOfMessage(bytes, i)) {
-				InmarsatMessage message;
-				byte[] messageBytes = Arrays.copyOfRange(bytes, i, bytes.length);
-				try {
-					message = new InmarsatMessage(messageBytes);
-				} catch (InmarsatException e) {
-					LOGGER.info(e.toString(), e);
-					errorInfile = true;
-					continue;
-				}
-
-				if (message.validate()) {
-					messages.add(message);
-				} else {
-					LOGGER.info("Message in file rejected:{}", message);
-				}
-			}
-		}
-
-		if (errorInfile) {
-			LOGGER.info("Error in file detected");
-		}
-		return messages.toArray(new InmarsatMessage[messages.size()]);
 	}
 
 	private String format(String str) {
@@ -143,17 +98,101 @@ public class ReadInmarsat {
 		return ret;
 	}
 
-	public byte[] insertMissingData(byte[] input) {
-		byte[] output = insertMissingMsgRefNo(input);
-		output = insertMissingStoredTime(output);
-		output = insertMissingMemberNo(output);
+	public InmarsatMessage[] byteToInmMessage(final byte[] fileBytes) {
+		byte[] bytes = insertMissingData(fileBytes);
 
-		if (LOGGER.isDebugEnabled() && (input.length < output.length)) {
-			LOGGER.info("Message fixed: {} -> {}", InmarsatUtils.bytesArrayToHexString(input),
-					InmarsatUtils.bytesArrayToHexString(output));
+		ArrayList<InmarsatMessage> messages = new ArrayList<>();
+		if (bytes == null || bytes.length <= PATTERN_LENGTH) {
+			LOGGER.error("Not a valid Inmarsat Message: {}", Arrays.toString(bytes));
+			return new InmarsatMessage[]{};
+		}
+		// Parse bytes for messages
+		for (int i = 0; i < (bytes.length - PATTERN_LENGTH); i++) {
+			// Find message
+			if (InmarsatHeader.isStartOfMessage(bytes, i)) {
+				InmarsatMessage message;
+				byte[] messageBytes = Arrays.copyOfRange(bytes, i, bytes.length);
+				try {
+					message = new InmarsatMessage(messageBytes);
+				} catch (InmarsatException e) {
+					System.out.println(e.toString());
+					continue;
+				}
+
+				if (message.validate()) {
+					messages.add(message);
+				} else {
+					LOGGER.error("Could not validate position(s)");
+				}
+			}
+		}
+		return messages.toArray(new InmarsatMessage[0]); // "new InmarsatMessage[0]" is used instead of "new
+		// Inmarsat[messages.size()]" to get better performance
+	}
+
+
+	/**
+	 * Header sent doesn't always adhere to the byte contract.. This method tries to insert fix the missing parts..
+	 *
+	 * @param input bytes that might contain miss some bytes
+	 * @return message with fixed bytes
+	 */
+	public byte[] insertMissingData(byte[] input) {
+
+		byte[] output = insertMissingMsgRefNo(input);
+		output = insertMissingMsgRefNo(output);         //incoming inmarsat message might be missing one or two bytes in the message reference number
+		//output = insertMissingStoredTime(output);
+		output = insertMissingMemberNo(output);
+		output = padHeaderToCorrectLength(output);
+
+		if (input.length < output.length) {
+			System.out.println("Message fixed: " + InmarsatUtils.bytesArrayToHexString(input) +  " -> " + InmarsatUtils.bytesArrayToHexString(output));
 		}
 		return output;
 
+	}
+
+	private byte[] padHeaderToCorrectLength(final byte[] contents) {
+		byte[] input = contents.clone();
+		ByteArrayOutputStream output = new ByteArrayOutputStream();
+		boolean insert = false, doubleInsert = false;
+		int insertPosition = 0;
+		for (int i = 0; i < input.length; i++) {
+			// Find SOH
+			if (InmarsatHeader.isStartOfMessage(input, i)) {
+				byte[] header = Arrays.copyOfRange(input, i, input.length);
+				HeaderType headerType = InmarsatHeader.getType(header);
+
+				int headerLength = headerType.getHeaderLength();
+				int realHeaderLength = header.length;
+				if((headerLength - 1) < realHeaderLength) {  // avoid arrayoutofbounds
+					int token = header[headerLength - 1];
+					if (token != InmarsatDefinition.API_EOH) {
+						if(header[headerLength - 2] == InmarsatDefinition.API_EOH){
+							insert = true;
+							insertPosition = i +  headerType.getHeaderStruct().getPositionStoredTime();
+						}else if(header[headerLength - 3] == InmarsatDefinition.API_EOH){
+							doubleInsert = true;
+							insertPosition = i +  headerType.getHeaderStruct().getPositionStoredTime();
+						}
+						System.out.println("Header is " + ((doubleInsert) ? "two" : "one") + " short so we add 00 as needed to the stored time position at position: " + insertPosition);    //since we dont use stored time it is "relatively" risk-free to add positions there
+						System.out.println("Incorrect header short: " + InmarsatUtils.bytesArrayToHexString(Arrays.copyOfRange(input, i, i + 20)));
+
+					}
+				}
+			}
+			if ((insert || doubleInsert) && ((insertPosition) == i)) {
+				insert = false;
+				insertPosition = 0;
+				output.write((byte) InmarsatDefinition.API_UNKNOWN_ERROR); // Just 00
+				if(doubleInsert){
+					doubleInsert = false;
+					output.write((byte) InmarsatDefinition.API_UNKNOWN_ERROR); // One more 00
+				}
+			}
+			output.write(input[i]);
+		}
+		return output.toByteArray();
 	}
 
 	private byte[] insertMissingMsgRefNo(final byte[] contents) {
@@ -169,12 +208,13 @@ public class ReadInmarsat {
 				HeaderType headerType = InmarsatHeader.getType(header);
 
 				if (headerType.getHeaderStruct().isPresentation()) {
-					HeaderDataPresentation presentation = InmarsatHeader.getDataPresentation(header);
+					HeaderDataPresentation presentation = InmarsatHeader.getDataPresentation(header);   //Data presentation checks if position 11 is a one or a two
 
 					if (presentation == null) {
-						LOGGER.info("Presentation is not correct so we add 00 to msg ref no");
 						insert = true;
-						insertPosition = i + HeaderStruct.POS_REF_NO_END;
+						insertPosition = i + HeaderStruct.POS_REF_NO_START;
+						System.out.println("Presentation is not correct so we add 00 to msg ref no at position: " + insertPosition);
+						System.out.println("Incorrect header msg ref no: " + InmarsatUtils.bytesArrayToHexString(Arrays.copyOfRange(input, i, i + 20)));
 					}
 				}
 			}
@@ -189,37 +229,6 @@ public class ReadInmarsat {
 
 	}
 
-	private byte[] insertMissingStoredTime(byte[] contents) {
-		// Missing Date byte (incorrect date..)? - insert #00 in date first position
-		byte[] input = contents.clone();
-		ByteArrayOutputStream output = new ByteArrayOutputStream();
-		boolean insert = false;
-		int insertPosition = 0;
-
-		for (int i = 0; i < input.length; i++) {
-			// Find SOH
-			if (InmarsatHeader.isStartOfMessage(input, i)) {
-				byte[] header = Arrays.copyOfRange(input, i, input.length);
-				HeaderType headerType = InmarsatHeader.getType(header);
-
-				Date headerDate = InmarsatHeader.getStoredTime(header);
-
-				if (headerDate.after(Calendar.getInstance(InmarsatDefinition.API_TIMEZONE).getTime())) {
-					LOGGER.info("Stored time is not correct so we add 00 to in first position");
-					insert = true;
-					insertPosition = i + headerType.getHeaderStruct().getPositionStoredTime();
-				}
-
-			}
-			if (insert && (insertPosition == i)) {
-				insert = false;
-				insertPosition = 0;
-				output.write((byte) 0x00);
-			}
-			output.write(input[i]);
-		}
-		return output.toByteArray();
-	}
 
 	private byte[] insertMissingMemberNo(byte[] contents) {
 
@@ -238,7 +247,7 @@ public class ReadInmarsat {
 				// Check if memberNo exits
 				if ((expectedEOHPosition >= input.length)
 						|| ((input[expectedEOHPosition - 1] == (byte) InmarsatDefinition.API_EOH)
-								&& input[expectedEOHPosition] != (byte) InmarsatDefinition.API_EOH)) {
+						&& input[expectedEOHPosition] != (byte) InmarsatDefinition.API_EOH)) {
 					insert = true;
 					insertPosition = expectedEOHPosition - 1;
 				}
@@ -246,15 +255,14 @@ public class ReadInmarsat {
 			}
 			// Find EOH
 			if (insert && (input[i] == (byte) InmarsatDefinition.API_EOH) && (insertPosition == i)) {
-				LOGGER.info("Message is missing member no");
 				output.write((byte) 0xFF);
 				insert = false;
 				insertPosition = 0;
-
+				System.out.println("Message is missing member no, inserting FF at position: " + insertPosition);
+				System.out.println("Incorrect header member no: " + InmarsatUtils.bytesArrayToHexString(Arrays.copyOfRange(input, i, i + 20)));
 			}
 			output.write(input[i]);
 		}
 		return output.toByteArray();
 	}
-
 }
